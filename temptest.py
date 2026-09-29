@@ -4,8 +4,10 @@ import base64
 import json
 import math
 import queue
+import struct
 import threading
 import tkinter as tk
+import zlib
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -112,7 +114,7 @@ class CameraCaptureUI:
 			"sensor_mode": {
 				"index": self.mode_box.current(),
 				"size": list(mode["size"]),
-				"format": mode["format"],
+				"format": str(mode["format"]),
 				"bit_depth": mode["bit_depth"],
 				"fps": mode["fps"],
 			},
@@ -139,7 +141,7 @@ class CameraCaptureUI:
 
 	def _configure_camera(self, mode):
 		config = self.camera.create_preview_configuration(
-			main={"size": (640, 480), "format": "RGB888"},
+			main={"size": (640, 480), "format": "YUV420"},
 			raw={"size": mode["size"], "format": mode["format"]},
 			sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
 		)
@@ -188,11 +190,22 @@ class CameraCaptureUI:
 
 	@staticmethod
 	def _preview_data(frame):
-		# Picamera2's RGB888 array is BGR-ordered on the Raspberry Pi.
-		rgb = np.ascontiguousarray(frame[:, :, ::-1])
-		height, width = rgb.shape[:2]
-		ppm = f"P6\n{width} {height}\n255\n".encode("ascii") + rgb.tobytes()
-		return base64.b64encode(ppm).decode("ascii")
+		height = frame.shape[0] * 2 // 3
+		gray = np.ascontiguousarray(frame[:height, :])
+		width = gray.shape[1]
+		scanlines = b"".join(b"\x00" + gray[row].tobytes() for row in range(height))
+
+		def chunk(kind, data):
+			payload = kind + data
+			return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+
+		png = (
+			b"\x89PNG\r\n\x1a\n"
+			+ chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+			+ chunk(b"IDAT", zlib.compress(scanlines))
+			+ chunk(b"IEND", b"")
+		)
+		return base64.b64encode(png).decode("ascii")
 
 	def _refresh_ui(self):
 		while True:
@@ -219,7 +232,7 @@ class CameraCaptureUI:
 			preview = self.latest_preview
 			self.latest_preview = None
 		if preview is not None:
-			self.preview_photo = tk.PhotoImage(data=self._preview_data(preview), format="PPM")
+			self.preview_photo = tk.PhotoImage(data=self._preview_data(preview), format="PNG")
 			self.preview_label.configure(image=self.preview_photo, text="")
 		if self.capture_enabled.is_set():
 			self.status.set(f"Collecting: {self.saved_frames} frames saved")

@@ -66,7 +66,7 @@ def main():
 
 	picam2 = Picamera2()
 	try:
-		mode = picam2.sensor_modes[args.mode]
+		mode = picam2.sensor_modes[8]
 		config = picam2.create_preview_configuration(
 			main={"size": (320, 240), "format": "YUV420"},
 			raw={"size": mode["size"], "format": mode["format"]},
