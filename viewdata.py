@@ -15,9 +15,21 @@ import numpy as np
 from picamera2 import Picamera2
 
 
-def _viewable_image(raw_frames):
-	"""Convert raw sensor values to an 8-bit grayscale image."""
-	image = np.asarray(raw_frames[0], dtype=np.float32)
+def _viewable_image(raw_frames, width):
+	"""Convert an unpacked raw frame to 8-bit grayscale without row padding."""
+	raw = np.asarray(raw_frames[0])
+	if raw.dtype == np.uint8:
+		if raw.ndim != 2 or raw.shape[1] < width * 2:
+			raise ValueError(f"Expected 16-bit raw rows with at least {width * 2} bytes")
+		# Convert 16-bit raw data to 8-bit grayscale
+		image = raw[:, :width * 2].copy().view("<u2").reshape(raw.shape[0], width)
+	elif raw.dtype == np.uint16:
+		if raw.ndim != 2 or raw.shape[1] < width:
+			raise ValueError(f"Expected 16-bit raw rows with at least {width} pixels")
+		image = raw[:, :width]
+	else:
+		raise ValueError(f"Unsupported raw array dtype: {raw.dtype}")
+	image = np.asarray(image, dtype=np.float32)
 	low, high = np.percentile(image, (1, 99))
 	if high <= low:
 		low = float(image.min())
@@ -47,6 +59,8 @@ def capture_raw(picam2, frame_count=None, duration=None):
 			frames.append(np.array(request.make_array("raw"), copy=True))
 		finally:
 			request.release()
+			#print(f"array length: {frames[-1][0].size}")
+			print(f"array: {frames[-1].dtype}, shape: {frames[-1].shape}")
 	return np.stack(frames), time.monotonic() - start
 
 
@@ -66,15 +80,17 @@ def main():
 
 	picam2 = Picamera2()
 	try:
+		#using -1 returns the max resolution, max bit depth sensor mode 
 		mode = picam2.sensor_modes[-1]
 		print(f"Using sensor mode: {mode}")
 		config = picam2.create_preview_configuration(
 			main={"size": (320, 240), "format": "YUV420"},
-			raw={"size": mode["size"], "format": mode["format"]},
+			raw={"size": mode["size"], "format": mode["unpacked"]},
 			sensor={"output_size": mode["size"], "bit_depth": mode["bit_depth"]},
 		)
 		picam2.align_configuration(config)
 		picam2.configure(config)
+		raw_width = picam2.stream_configuration("raw")["size"][0]
 		frame_duration_us = math.ceil(1_000_000 / mode["fps"])
 		picam2.set_controls({"FrameDurationLimits": (frame_duration_us, frame_duration_us)})
 
@@ -93,7 +109,7 @@ def main():
 	args.output.parent.mkdir(parents=True, exist_ok=True)
 	args.output.with_suffix(".npy").parent.mkdir(parents=True, exist_ok=True)
 	#np.save(args.output.with_suffix(".npy"), frames)
-	_save_png(_viewable_image(frames), args.output.with_suffix(".png"))
+	_save_png(_viewable_image(frames, raw_width), args.output.with_suffix(".png"))
 	metadata = {
 		"shape": list(frames.shape),
 		"dtype": str(frames.dtype),
