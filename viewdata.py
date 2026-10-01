@@ -45,7 +45,7 @@ def _save_png(image, path):
 		from PIL import Image
 	except ImportError as error:
 		raise RuntimeError("Saving a PNG requires Pillow: python -m pip install Pillow") from error
-	Image.fromarray(image, mode="L").save(path)
+	Image.fromarray(image).save(path)
 
 
 def capture_raw(picam2, frame_count=None, duration=None):
@@ -108,7 +108,9 @@ def main():
 
 	args.output.parent.mkdir(parents=True, exist_ok=True)
 	args.output.with_suffix(".npy").parent.mkdir(parents=True, exist_ok=True)
-	#np.save(args.output.with_suffix(".npy"), frames)
+	np.save(args.output.with_suffix(".npy"), frames)
+	raw_image_path = args.output.with_name(f"{args.output.stem}_raw.png")
+	_save_png(frames[0], raw_image_path)
 	_save_png(_viewable_image(frames, raw_width), args.output.with_suffix(".png"))
 	metadata = {
 		"shape": list(frames.shape),
@@ -118,7 +120,8 @@ def main():
 		"sensor_mode": mode,
 	}
 	#args.output.with_suffix(".json").write_text(json.dumps(metadata, indent=2, default=str) + "\n")
-	#print(f"Saved {len(frames)} raw frames to {args.output.with_suffix('.npy')}")
+	print(f"Saved {len(frames)} untouched raw frames to {args.output.with_suffix('.npy')}")
+	print(f"Saved untouched raw image to {raw_image_path}")
 	print(f"Saved normalized view to {args.output.with_suffix('.png')}")
 
 
